@@ -1,0 +1,19 @@
+mysql 基础结构
+连接器 client与mysql的长链接建立&维护
+缓存(key为sql value为结果 代价太大 基本废弃)
+分析器(sql词法&语法分析)
+优化器(生成sql执行计划 选择索引)
+执行器(与存储引擎交互 执行sql)
+存储引擎(innodb myisam memory)
+
+write ahead log(日志先行)
+db将数据写入磁盘时 现将其数据变化写入日志(mysql redo log / HDFS edit log) 然后异步写入磁盘
+此操作可以减少大量io开销(日志顺序写 磁盘随机写) 同时当db崩溃时 可以通过日志恢复数据
+
+mysql crash-safe保证与binlog/redo log 两阶段提交(2PC)
+mysql保证重启或崩溃时已提交的数据不会丢失
+当数据写入时 首先写入redo log中 将redo log 此行状态置为prepare 然后写入binlog 最后将redo log 此行状态置为commit
+redo log 存在于innodb中 binlog是mysql执行器自带的日志
+redo log 用于crash时的数据恢复 binlog用于时间点的数据恢复以及主从同步
+redo log 为环状数据结构 一个指针指向下次写入的地址 一个指针指向需要擦除的地址 若redo log写满 则会擦除最老的log
+写日志时 写入os cache中再刷入磁盘中 通过配置可在每次写入os cache时强制刷盘
