@@ -4,21 +4,67 @@ mysql 基础结构
 分析器(sql词法&语法分析)
 优化器(生成sql执行计划 选择索引)
 执行器(与存储引擎交互 执行sql)
-存储引擎(innodb myisam memory)
+存储引擎(innodb MyISAM memory)
 
 write ahead log(日志先行)
-db将数据写入磁盘时 现将其数据变化写入日志(mysql redo log / HDFS edit log) 然后异步写入磁盘
+db将数据写入磁盘时 现将其数据变化写入日志(innodb redo log / HDFS edit log) 然后异步写入磁盘
 此操作可以减少大量io开销(日志顺序写 磁盘随机写) 同时当db崩溃时 可以通过日志恢复数据
 
+mysql存储引擎(存储引擎对于表 而非整个数据库的全局设置)
+mysql类似一个数据库平台 可以通过实现不同的存储引擎来成为不同类型的数据库(如 使用innodb作为事务型数据库 MyISAM作为非事务型数据库 memory作为内存型数据库 archive可以作为保存日志的数据库)
+innodb 支持事务 支持crash-safe 对高并发读写做了极大的优化 是mysql当前版本的默认存储引擎
+MyISAM 不支持事务 仅支持表级锁 支持全文索引 支持压缩表 最存储空间要求较小 且在某些场景下性能较高(没有innodb复杂的事务支持 且由于表占用空间较小 io开销小) 崩溃后恢复较为复杂且无法保证数据不丢失
+memory 内存型引擎 数据不会落入磁盘 应用重启后数据丢失 使用hash作为存储数据结构 较高的读写效率
+archive 不支持事务 仅支持select&inster操作 有较高的写效率 较合适作为日志存储使用
+mysql在查询时产生的临时表 默认使用MyISAM存储引擎
+
 mysql crash-safe保证与binlog/redo log 两阶段提交(2PC)
-mysql保证重启或崩溃时已提交的数据不会丢失
+mysql innodb保证重启或崩溃时已提交的数据不会丢失
 当数据写入时 首先写入redo log中 将redo log 此行状态置为prepare 然后写入binlog 最后将redo log 此行状态置为commit
 redo log 存在于innodb中 binlog是mysql执行器自带的日志
 redo log 用于crash时的数据恢复 binlog用于时间点的数据恢复以及主从同步
 redo log 为环状数据结构 一个指针指向下次写入的地址 一个指针指向需要擦除的地址 若redo log写满 则会擦除最老的log
-写日志时 写入os cache中再刷入磁盘中 通过配置可在每次写入os cache时强制刷盘
+写日志时 先写入应用 cache 再写入os cache中 再刷入磁盘中 通过配置可在每次写入os cache时强制刷盘
 
 buffer pool
+mysql通过buffer pool实现异步刷盘的策略 减少io的开销
+mysql 允许存在多个buffer pool 来减少同一块内存区域频繁读写的压力 以及 扩容的便捷性(单纯增加一块buffer pool即可)
+缓冲池中的缓存页包括 数据页 索引页 插入缓冲 锁信息 自适应哈希 数据字典信息
+当页被访问时 先加载到buffer pool中 之后对此页的操作均在内存中进行 当页被置换或定时任务扫描命中时 再将页的修改刷入磁盘
+buffer pool维护三个指向各个页的链表
+free链表 在buffer pool所属的内存页中 哪些页是空闲的可以被写入数据
+flush链表 内存页中哪些页被修改过 需要被刷入磁盘
+LRU链表 内存页LRU置换算法维护的链表 由此实现LRU算法(最近最久未访问)置换页
+buffer pool刷盘时机(check point)
+当数据库关闭/重启时 主动将所有脏页刷入磁盘
+使用定时任务每1s/10s主动将一部分脏页刷入磁盘
+当buffer pool的空闲页小于一定数量时
+当重做日志不可用时(重做日志最老的数据需要被覆盖) 将重做日志被清理的脏页刷入磁盘 保证数据库数据不丢失
+当buffer pool脏页过多时
+
+重做日志缓冲(redo log buffer)
+为提高并发 redo log写入时也先写入缓存中 再异步刷入磁盘
+有三个时机会将buffer中的数据刷入磁盘(os cache) 每隔1秒执行的定时任务 事务提交时 当buffer空闲空间小于50%时
+
+额外内存池(innodb_additional_mem_pool)
+用于存储缓冲控制对象信息(LRU 锁 等待) 当buffer pool较大时 此内存区域设置也要相应变大
+
+innodb关键优化特性
+change buffer 当对非主键索引页进行插入/修改&该索引不是唯一索引(插入 change buffer时不会检查索引页中的数据是否存在)&索引页不在buffer pool时 为减少io开销(对非聚簇索引页的写入是磁盘随机读写) 将此写入操作先放入 change buffer中 等待某个时机将对此索引页的全部修改操作同时刷入磁盘
+    change buffer 分为insert buffer/delete buffer/purge buffer三种 对应对索引页的插入 逻辑删除 物理删除三种操作
+    每一种change buffer 对应一个数据库全局的b+树 树的非叶子节点存放具体的表空间和数据页偏移量 叶子节点还存放了具体被修改的信息以及操作的时间顺序
+    change buffer 刷入时机
+        当索引页被写入buffer pool中时 将change buffer中的操作同时写入
+        当辅助索引页空间小于一定值时(为保证写入change buffer的操作一定成功)
+        定时任务刷入
+两次写(double write) 防止当写入页时宕机导致的页文件损坏
+    当buffer pool中的脏页需要刷盘时 先将脏页copy一份至double write buffer中 再将页刷盘至共享表空间 此时 磁盘中同一页同时存在两份(一份在共享表空间 一份在表的独立空间) 这样当刷入共享表空间或从共享表空间刷入表独立空间时发生宕机 都可保证至少有一页是完整的 恢复时可以根据完整的页和redo log 恢复数据
+    os 部分类型的文件系统已经实现了部分写失效的防范机制 使用这些文件系统时可以不启用double write
+自适应hash索引(adaptive hash index) 当某一个索引页访问非常频繁时(对顺序相同的字段查询超过100次或超过页记录数量的1/16) 则自动建立该索引页的hash表 提升查询效率
+异步io 对于磁盘的读写使用AIO方式进行 无需等待上一次io返回结果再进行下一次io 且如果多次io操作的页是顺序的 则可以合并成一次io进行处理
+    mysql提供了用户级别的模拟AIO和操作系统的native AIO(与操作系统相关 MAC OS 不支持)
+刷新临接页 脏页刷盘时 会检查临接的其他页是否需要刷入 若需要 则合并成一次io同时刷入
+    当磁盘iops较高时 此特性可以关闭(磁盘写入效率较高且无法预测临接脏页刷入后会不会立刻又变成脏页)
 
 事务隔离级别与mvcc
 
