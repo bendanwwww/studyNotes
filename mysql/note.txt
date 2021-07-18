@@ -20,11 +20,16 @@ mysql在查询时产生的临时表 默认使用MyISAM存储引擎
 
 mysql crash-safe保证与binlog/redo log 两阶段提交(2PC)
 mysql innodb保证重启或崩溃时已提交的数据不会丢失
-当数据写入时 首先写入redo log中 将redo log 此行状态置为prepare 然后写入binlog 最后将redo log 此行状态置为commit
+当数据写入时 首先写入redo log中 将redo log 此行状态置为prepare 当事务被提交时写入binlog 最后将事务中所有写入的redo log状态置为commit
 redo log 存在于innodb中 binlog是mysql执行器自带的日志
 redo log 用于crash时的数据恢复 binlog用于时间点的数据恢复以及主从同步
 redo log 为环状数据结构 一个指针指向下次写入的地址 一个指针指向需要擦除的地址 若redo log写满 则会擦除最老的log
 写日志时 先写入应用 cache 再写入os cache中 再刷入磁盘中 通过配置可在每次写入os cache时强制刷盘
+每个redo log记录了一个LSN(log sequence number 日志序列号) 记录了当前重做日志的字节数 数据页中也记录了一个LSN 记录了当前已经刷入磁盘的重做日志字节数 当崩溃恢复时 可以根据两者的LSN差值 恢复丢失的数据
+
+undo log(数据回滚日志 存在于undo segment 实现事务回滚或mvcc)
+    包括insert undo log(插入语句的undo log 仅针对单个事务 当事务被提交后即可被删除)
+        update undo log(更新/删除语句的undo log 由于mvcc的需要 当单个事务提交后不能立刻被删除 由定时purge操作 通过查询事务链表判断此事务释放被其他事务快照所引用 若未被引用则删除 同时删除索引上delete标识被该事务置为1的节点)
 
 buffer pool
 mysql通过buffer pool实现异步刷盘的策略 减少io的开销
@@ -108,3 +113,17 @@ mysql锁分为 共享锁(S锁) 排它锁(X锁)两种 对于数据来讲 锁只�
     mysql维护一个自增锁来保证并发请求时自增id的递增性质 (使用表全局的锁 不随事务提交释放 而是自增量访问完成后立刻释放或使用轻量级互斥量(mutex))
 
 事务
+ACID特性
+    atomicity 原子性(同一事物中所有操作对应用来讲为原子操作 任一操作失败 全部操作回滚)
+    consistency 一致性(事务使数据库从一个一致性状态转变成下一个一致性状态 不存在中间状态)
+    isolation 隔离性(两个事务之间互不影响 一个事物不会读到其他事物未提交或提交的数据)
+    durability 持久性(事务提交后数据即永久保留 不受应用或应用载体状态的影响)
+标准的事务隔离级别(读未提交 读已提交 可重复度 串行化)
+分布式事务(XA两阶段提交)
+    mysql内部的XA事务(binlog与redo log 先记录redo log 标识为prepare 再记录binlog 成功后标识redo log为commit)
+    服务之间的XA事务(事务管理器发起任务 服务依次报告是否可执行 通过后事务管理器发起执行并报告执行结果 管理器收到报告 全部成功则通知服务commit 有一个失败则通知服务rollback 服务收到后回复管理器收到消息 若管理器未收到回执则重复发送)
+group commit(组提交) 此优化针对redo log&binlog 写入缓冲后的刷盘操作 由于刷盘的io开销相对较大 一次刷盘后将下一次需要刷盘的多次操作合并为一个  提高io效率(等待刷盘的binlog维护在一个链表中 进行group commit后按顺序通知redo log commit 保证binlog和redo log刷盘时的顺序一致性)
+binlog设置为statement时在主从架构中的问题
+    statement的binlog记录执行的具体sql 在读已提交的场景下 若事务a执行删除操作未提交(delete where id < 5) 事务b执行插入操作并提交(insert id = 3) 之后事务a提交 此时在同步给slave的binlog为先insert后delete(按照事务的提交顺序) 和master上真正的sql执行顺序相反 导致主从不一致
+    避免此种现象有两只方案 使用可重复读的事务隔离级别(delete时加入间隙锁 只有等a事务提交后b事务才可执行)
+                        使用row模式的binlog 此时binlog记录的是每一行的变化(事务a记录数据行无变化 事务b记录插入的数据行变化 事务的提交顺序并不会影响主从一致性)
