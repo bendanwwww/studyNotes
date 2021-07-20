@@ -1,0 +1,19 @@
+简单动态字符串(simple dynamic string SDS)
+SDS结构 int len(已占用空间长度) int free(空闲空间长度) char buf[](字符数组) 为了使用c的字符串类库 SDS字符串结尾默认写入一个不计入总空间的空字符'\0'
+当buf需要扩容时 若此时数组长度小于1M 则扩展和len相同的长度 若大于1M 则扩展1M长度
+当buf中的字符减少时不会立刻缩容 可以通过显示的调用api进行空间释放
+对比c字符串 SDS减少了频繁申请内存的操作 申请内存动作对用户无感知 减少了内存溢出和泄露的风险 同时字符串长度使用len变量保存 提高了效率
+    总体上讲 SDS比c字符串效率更高(申请内存动作 字符串长度读取)且可以存放更丰富的数据('\0'不作为字符串结尾的标识 可以存放带空字符的二进制文本) 这是redis使用其代替c字符串的原因
+
+链表(双向链表)
+链表节点结构 struct ListNode *prev(前置节点) struct ListNode *next(后置节点) void *value(值 任意类型)
+链表结构 head(头节点) tail(尾结点) len(链表长度) dup(复制函数) free(释放空间函数) match(节点比较函数) 由于链表节点值类型不确定 需要实现不同的复制/释放空间/比较函数
+
+字典(hash表)
+dictht结构(redis hash表结构) table(hash数组) size(数组长度) sizemask(hash表大小掩码 size - 1) used(已保存元素个数)
+dict结构(redis 字典数据结构) type(存储元素类型) privdata(存储元素实现的函数 计算hash值/复制/释放空间/比较) ht[2](两个dicttht 用于rehash) trehashidx(是否正在进行rehash -1 不在进行 0 正在进行)
+redis的hash冲突使用链表解决
+当一个hash数组的负载因子(已保存元素个数/数组总长度) 在未进行aof或rdb时大于1 或在进行aof或rdb时大于5 时 进行扩容(大于used * 2最接近的2^n)
+当一个hash数组的负载因子小于0.1时进行缩容(小于used 最接近的2^n)
+渐进式rehash 当进行扩缩容时 将trehashidx置为0 当执行插入/更新/删除操作时 将数组此下标下链表元素迁移至ht[1]中 直至全部迁移完成 将ht[0]指向ht[1] 将ht[1]指向一个大小与ht[0]一样的新创建的空dictht 最后将trehashidx置回-1 
+在rehash时 插入操作全部插入至ht[1] 查询时先查询ht[0] 若查不到则查询ht[1]
