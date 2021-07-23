@@ -37,3 +37,45 @@ redis可以申请一片连续的内存空间 用于保存整数或字符串集�
 当进行插入或删除操作时 时间复杂度可能为O(n)(需要对后续节点依次后推或前移) 也可能为O(n^2)(连锁更新 由于previous_entry_length记录的前一个节点长度可能为1字节或5字节 节点长度过长可能使用5字节 当某一个节点的长度需要从1字节扩展至5字节且前序节点长度都在扩展临界值时 会发生连锁更新)
 当一个集合元素较少且元素长度较短时 使用压缩列表可以节省内存空间且对集合操作的平均时间复杂度为O(n) 尚可接受
 
+redis支持对象(string 字符串对象 list 列表对象 hash 哈希对象 set 集合对象 zset 有序集合对象)
+redis的每一个键值都被包装成了一个redisobject对象 其中包括 type(对象类型 string list hash 等) encoding(对象编码 实现的数据结构类型 跳跃表 压缩列表 embstr编码的字符串等) ptr(指向底层数据结构的指针 指向真正存储数据的结构) refcount(引用计数器 记录此对象被引用的数量) lru(记录此对象最后一次被访问的时间戳)
+string 字符串对象
+    有int raw embstr 三种数据结构的实现
+    若字符串为一个整数 则使用int类型的编码 将字符串以数字形式保存(节省内存和编解码时间)
+    若字符串较短(小于等于32个字节) 则使用embstr数据结构(申请一片连续的内存 保存redisobject对象和embstr对象 节省了申请内存的时间 且因为空间连续 可以更有效的使用cpu缓存)
+    若字符串不是一个整数且大于32个字节 则使用raw类型(SDS 简单动态字符串 编码格式与embstr相同 和redisobject对象分开申请内存)
+    当int类型编码被修改成一个非整数字符串或执行了处理字符串相关函数(类似append subindex等) 会被转换成raw类型编码
+    当embstr类型编码被修改(embstr为只读 避免修改时重新申请内存空间的开销) 会被转换成raw编码
+    在redis其他对象中保存的字符串 均使用了类型为string的redisobject
+list 列表对象
+    有ziplist linkedlist 两种数据结构实现
+    若一个列表的长度小于512个且每个元素的大小小于64字节 则使用ziplist(压缩列表 申请连续的内存空间 开销较小 但插入效率较低 不适合元素较多的场景) 否则使用linkedlist(双向链表)
+    当ziplist类型的数据结构被修改时有任意一个条件不被满足 则转换为linkedlist
+hash 哈希对象
+    有ziplist hashtable 两种数据结构实现
+    若一个hash字典保存的元素小于512个且每个元素大小小于64字节 则使用ziplist(每个元素在压缩列表中占两个连续的entryX 第一个保存hash key 第二个保存hash value)
+    若一个hash字典保存的元素大于等于512个或有元素大小大于等于64字节 则使用hashtable
+    当ziplist类型的数据结构被修改 不满足上述条件时 则转换成hashtable
+set 集合对象
+    有intlist hashtable 两种数据结构实现
+    若一个set中只包含整数且元素个数小于512 则使用intset集合 否则使用hashtable(value为null)
+    当intlist类型的数据结构被修改 不满足上述条件时 则转换成hashtable
+zset 有序集合对象
+    有ziplist skiplist+hashtable 两种数据结构实现
+    若zset保存的元素小于128个且每个元素长度小于64字节 则使用ziplist(每个元素在压缩列表中占两个连续的entryX 第一个保存元素值 第二个保存元素score 在压缩列表中以score从小到大排序)
+    若zset保存的元素大于等于128个或有元素长度大于64字节 则使用skiplist+hashtable(在hashtable中保存了元素值和score的键值对 方便查询元素的score)
+
+当一个对象没有任何引用的时候(redisobject refcount为0) 则此对象可以被回收(定时任务采样 内存不足时)
+redis启动时创建了0-9999的字符串对象 当有对象需要引用时 共享这些被创建好的对象 其他类型的对象不支持共享(比较对象是否相等的时间复杂度过高)
+
+redis过期策略
+
+RDB
+
+AOF
+
+redis集群
+
+redis发布订阅模型
+
+redis线程模型
