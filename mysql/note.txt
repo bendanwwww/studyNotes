@@ -125,5 +125,5 @@ ACID特性
 group commit(组提交) 此优化针对redo log&binlog 写入缓冲后的刷盘操作 由于刷盘的io开销相对较大 一次刷盘后将下一次需要刷盘的多次操作合并为一个  提高io效率(等待刷盘的binlog维护在一个链表中 进行group commit后按顺序通知redo log commit 保证binlog和redo log刷盘时的顺序一致性)
 binlog设置为statement时在主从架构中的问题
     statement的binlog记录执行的具体sql 在读已提交的场景下 若事务a执行删除操作未提交(delete where id < 5) 事务b执行插入操作并提交(insert id = 3) 之后事务a提交 此时在同步给slave的binlog为先insert后delete(按照事务的提交顺序) 和master上真正的sql执行顺序相反 导致主从不一致
-    避免此种现象有两只方案 使用可重复读的事务隔离级别(delete时加入间隙锁 只有等a事务提交后b事务才可执行)
+    避免此种现象有两种方案 使用可重复读的事务隔离级别(delete时加入间隙锁 只有等a事务提交后b事务才可执行)
                         使用row模式的binlog 此时binlog记录的是每一行的变化(事务a记录数据行无变化 事务b记录插入的数据行变化 事务的提交顺序并不会影响主从一致性)
