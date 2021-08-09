@@ -9,31 +9,30 @@ public class ProducerConsumerModel {
     private static int maxStock = 10;
     private static Object lock = new Object();
 
+
     public void producer() throws InterruptedException {
         Thread.sleep(10);
         synchronized(lock) {
-            if (stock >= maxStock) {
+            while (stock >= maxStock) {
                 System.out.println("producer wait " + stock);
                 lock.wait();
-            } else {
-                stock++;
-                System.out.println("producer add " + stock);
-                lock.notify();
-            }
+            } 
+            stock++;
+            System.out.println("producer add " + stock);
+            lock.notifyAll();
         }
     }
 
     public void consumer() throws InterruptedException {
         Thread.sleep(10);
         synchronized(lock) {
-            if (stock <= 0) {
+            while (stock <= 0) {
                 System.out.println("consumer wait " + stock);
                 lock.wait();
-            } else {
-                stock--;
-                System.out.println("consumer delete " + stock);
-                lock.notify();
             }
+            stock--;
+            System.out.println("consumer delete " + stock);
+            lock.notifyAll();
         }
     }
 
