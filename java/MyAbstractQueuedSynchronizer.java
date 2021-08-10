@@ -136,8 +136,8 @@ public abstract class MyAbstractQueuedSynchronizer {
         for (;;) {
             // 若队列为空
             if (t == null) {
-                if (compareAndSetHead(head, newTail)) {
-                    this.head = newTail;
+                if (compareAndSetHead(this.head, newTail)) {
+                    this.tail = newTail;
                     return;
                 }
             } else {
@@ -161,6 +161,7 @@ public abstract class MyAbstractQueuedSynchronizer {
             if (node.getWaitState() == 1) {
                 break;
             }
+            node = node.next;
         }
         // 尝试获取锁
         if (node != null) {
