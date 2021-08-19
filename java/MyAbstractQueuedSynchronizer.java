@@ -131,9 +131,9 @@ public abstract class MyAbstractQueuedSynchronizer {
         AqsQueueNode newTail = new AqsQueueNode();
         newTail.setQueueThread(currentThread);
         newTail.setWaitState(1);
-        AqsQueueNode t = this.tail;
         // 保证一定插入成功
         for (;;) {
+            AqsQueueNode t = this.tail;
             // 若队列为空
             if (t == null) {
                 if (compareAndSetHead(this.head, newTail)) {

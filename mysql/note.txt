@@ -16,7 +16,7 @@ innodb 支持事务 支持crash-safe 对高并发读写做了极大的优化 是
 MyISAM 不支持事务 仅支持表级锁 支持全文索引 支持压缩表 最存储空间要求较小 且在某些场景下性能较高(没有innodb复杂的事务支持 且由于表占用空间较小 io开销小) 崩溃后恢复较为复杂且无法保证数据不丢失
 memory 内存型引擎 数据不会落入磁盘 应用重启后数据丢失 使用hash作为存储数据结构 较高的读写效率
 archive 不支持事务 仅支持select&inster操作 有较高的写效率 较合适作为日志存储使用
-mysql在查询时产生的临时表 默认使用MyISAM存储引擎
+mysql在查询时产生的临时表 首先使用memory存储引擎 当超过memory引擎存储容量时 使用MyISAM存储引擎
 
 mysql crash-safe保证与binlog/redo log 两阶段提交(2PC)
 mysql innodb保证重启或崩溃时已提交的数据不会丢失
